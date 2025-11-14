@@ -211,7 +211,6 @@ class NewsCrawler {
 
       // 发送通知
       await notifier.notify(`📰 今日新闻 - ${currentDate}`, simplifiedContent, true);
-
       await notifier.sendNewsNotification(`📰 今日新闻 - ${currentDate}`, items);
 
       console.log('✅ 已使用现有文件发送简化通知');
@@ -278,11 +277,12 @@ class NewsCrawler {
       console.log(`新闻数据已保存到: ${path.basename(outputFile)}`);
 
       // 生成简化通知内容（只包含标题和链接）
-      const simplifiedContent = this.generateSimpleNotificationFromItems(newsItems, 10);
+      const simplifiedContent = this.generateSimpleNotificationFromItems(newsItems, 20);
 
       // 发送通知
       console.log(`统计信息 - 总数: ${newsItems.length}条`);
       await notifier.notify(`📰 今日新闻 - ${currentDate}`, simplifiedContent, true);
+      await notifier.sendNewsNotification(`📰 今日新闻 - ${currentDate}`, newsItems);
 
       console.log('任务完成! (新抓取数据)');
     } catch (error) {
