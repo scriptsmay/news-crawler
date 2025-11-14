@@ -1,7 +1,7 @@
 const axios = require('axios');
 const fs = require('fs-extra');
 const path = require('path');
-const { notify } = require('./notifier');
+const notifier = require('./notifier'); // 修正导入方式
 
 class NewsCrawler {
   constructor() {
@@ -26,6 +26,78 @@ class NewsCrawler {
   getFormattedTime() {
     const now = new Date();
     return now.toLocaleString('zh-CN');
+  }
+
+  // 检查文件是否存在
+  async checkFileExists() {
+    const currentDate = this.getCurrentDate();
+    const outputFile = path.join(this.outputDir, `tophub_news_${currentDate}.md`);
+    return await fs.pathExists(outputFile);
+  }
+
+  // 读取现有文件内容
+  async readExistingFile() {
+    const currentDate = this.getCurrentDate();
+    const outputFile = path.join(this.outputDir, `tophub_news_${currentDate}.md`);
+
+    try {
+      const content = await fs.readFile(outputFile, 'utf8');
+      console.log(`发现现有文件: ${path.basename(outputFile)}`);
+      return content;
+    } catch (error) {
+      console.error('读取现有文件失败:', error.message);
+      return null;
+    }
+  }
+
+  // 格式化通知内容（避免内容过长）
+  formatNotificationContent(content, maxLength = 4000) {
+    if (content.length <= maxLength) {
+      return content;
+    }
+
+    // 截取内容并添加提示
+    const truncatedContent = content.substring(0, maxLength - 100);
+    return truncatedContent + '\n\n---\n*消息内容过长，已截断部分内容，完整内容请查看文件*';
+  }
+
+  // 从文件内容中提取统计信息
+  extractStatsFromContent(content) {
+    const lines = content.split('\n');
+    let totalCount = 0;
+    const categories = {};
+    let currentCategory = '';
+
+    for (const line of lines) {
+      // 提取总新闻数量
+      if (line.includes('总新闻数量:')) {
+        const match = line.match(/总新闻数量:\s*(\d+)/);
+        if (match) {
+          totalCount = parseInt(match[1]);
+        }
+      }
+
+      // 提取分类信息
+      else if (line.startsWith('## ')) {
+        currentCategory = line.replace('## ', '').trim();
+        categories[currentCategory] = 0;
+      }
+
+      // 统计每个分类的新闻数量
+      else if (line.startsWith('- [') && currentCategory) {
+        categories[currentCategory] = (categories[currentCategory] || 0) + 1;
+      }
+    }
+
+    // 过滤出有新闻的分类
+    const validCategories = Object.entries(categories)
+      .filter(([_, count]) => count > 0)
+      .map(([category, count]) => `${category}: ${count}条`);
+
+    return {
+      totalCount,
+      categorySummary: validCategories.join(', '),
+    };
   }
 
   // 分类新闻
@@ -143,11 +215,52 @@ class NewsCrawler {
     }
   }
 
+  // 发送现有文件内容作为通知
+  async sendExistingFileNotification() {
+    try {
+      const currentDate = this.getCurrentDate();
+      const fileContent = await this.readExistingFile();
+
+      if (!fileContent) {
+        throw new Error('无法读取现有文件内容');
+      }
+
+      // 提取统计信息
+      const stats = this.extractStatsFromContent(fileContent);
+
+      // 格式化通知内容
+      const notificationContent = this.formatNotificationContent(fileContent);
+
+      console.log(`使用现有文件发送通知 - 总数: ${stats.totalCount}条, 分类: ${stats.categorySummary}`);
+
+      // 发送通知
+      await notifier.notify(`📰 今日新闻 - ${currentDate}`, notificationContent, true);
+
+      console.log('✅ 已使用现有文件发送通知');
+      return true;
+    } catch (error) {
+      console.error('发送现有文件通知失败:', error.message);
+      return false;
+    }
+  }
+
   // 主执行函数
   async run() {
     try {
       const currentDate = this.getCurrentDate();
-      const outputFile = path.join(this.outputDir, `tophub_news_${currentDate}.md`);
+      const fileExists = await this.checkFileExists();
+
+      // 如果文件已存在，直接发送通知并退出
+      if (fileExists) {
+        console.log(`今日新闻文件已存在: tophub_news_${currentDate}.md`);
+        const success = await this.sendExistingFileNotification();
+        if (success) {
+          console.log('任务完成! (使用现有文件)');
+          return;
+        } else {
+          console.log('使用现有文件失败，继续执行抓取...');
+        }
+      }
 
       // 获取新闻数据
       const newsItems = await this.fetchNews();
@@ -165,8 +278,9 @@ class NewsCrawler {
       const markdownContent = this.generateMarkdown(categorizedNews, newsItems.length);
 
       // 保存到文件
+      const outputFile = path.join(this.outputDir, `tophub_news_${currentDate}.md`);
       await fs.writeFile(outputFile, markdownContent, 'utf8');
-      // console.log(`新闻数据已保存到: ${outputFile}`);
+      console.log(`新闻数据已保存到: ${path.basename(outputFile)}`);
 
       // 发送通知
       const categorySummary = Object.entries(categorizedNews)
@@ -174,16 +288,17 @@ class NewsCrawler {
         .map(([category, items]) => `${category}: ${items.length}条`)
         .join(', ');
 
-      console.log(`成功获取 ${newsItems.length} 条新闻\n分类: ${categorySummary}\n文件: ${path.basename(outputFile)}`);
+      console.log(`统计信息 - 总数: ${newsItems.length}条, 分类: ${categorySummary}`);
 
-      await notify(`今日新闻 - ${currentDate}`, markdownContent);
+      const notificationContent = this.formatNotificationContent(markdownContent);
+      await notifier.notify(`📰 今日新闻 - ${currentDate}`, notificationContent, true);
 
-      console.log('任务完成!');
+      console.log('任务完成! (新抓取数据)');
     } catch (error) {
       console.error('脚本执行失败:', error.message);
 
       // 发送错误通知
-      await notify('新闻爬取失败', `错误信息: ${error.message}\n时间: ${this.getFormattedTime()}`);
+      await notifier.notify('❌ 新闻爬取失败', `错误信息: ${error.message}\n时间: ${this.getFormattedTime()}`, true);
 
       process.exit(1);
     }
