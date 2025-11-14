@@ -24,7 +24,6 @@ class Notifier {
       if (typeof QLAPI !== 'undefined' && QLAPI.notify) {
         QLAPI.notify(title, content);
         console.log('通知已通过 QLAPI 发送');
-        return;
       }
 
       // 方法2: 使用 Gotify 通知
