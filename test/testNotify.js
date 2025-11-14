@@ -3,6 +3,7 @@ require('dotenv').config(); // 这行要加在最顶部
 const fs = require('fs-extra');
 const path = require('path');
 const notifier = require('../src/notifier');
+const NewsCrawler = require('../src/crawler');
 
 class TestNotifier {
   constructor() {
@@ -32,12 +33,8 @@ class TestNotifier {
     try {
       console.log('开始测试通知功能...\n');
 
-      // 1. 读取Markdown文件
-      const content = await this.readMarkdownFile();
-
-      // 4. 发送通知
-      console.log('正在发送通知...');
-      await notifier.notify('消息推送测试', content);
+      const crawler = new NewsCrawler();
+      await crawler.sendExistingFileNotification();
 
       console.log('✅ 测试通知发送完成！');
     } catch (error) {

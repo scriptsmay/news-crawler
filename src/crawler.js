@@ -1,7 +1,7 @@
 const axios = require('axios');
 const fs = require('fs-extra');
 const path = require('path');
-const notifier = require('./notifier'); // 修正导入方式
+const notifier = require('./notifier');
 
 class NewsCrawler {
   constructor() {
@@ -50,23 +50,49 @@ class NewsCrawler {
     }
   }
 
-  // 格式化通知内容（避免内容过长）
-  formatNotificationContent(content, maxLength = 4000) {
-    if (content.length <= maxLength) {
-      return content;
+  // 从文件内容中提取标题和链接（简化版本）
+  extractTitlesAndLinks(content, maxItems = 10) {
+    const lines = content.split('\n');
+    const items = [];
+
+    for (const line of lines) {
+      if (line.startsWith('- [')) {
+        // 提取标题和链接
+        const match = line.match(/^- \[(.*?)\]\((.*?)\)/);
+        if (match) {
+          const title = match[1];
+          const url = match[2];
+          items.push({ title, url });
+        }
+
+        // 达到最大数量时停止
+        if (items.length >= maxItems) {
+          break;
+        }
+      }
     }
 
-    // 截取内容并添加提示
-    const truncatedContent = content.substring(0, maxLength - 100);
-    return truncatedContent + '\n\n---\n*消息内容过长，已截断部分内容，完整内容请查看文件*';
+    return items;
+  }
+
+  // 生成简化通知内容（只包含标题和链接）
+  generateSimpleNotification(items) {
+    let content = '';
+
+    // 只显示标题和链接
+    items.forEach((item, index) => {
+      content += `${index + 1}. [${item.title}](${item.url})\n`;
+    });
+
+    content += `\n---\n`;
+
+    return content;
   }
 
   // 从文件内容中提取统计信息
   extractStatsFromContent(content) {
     const lines = content.split('\n');
     let totalCount = 0;
-    const categories = {};
-    let currentCategory = '';
 
     for (const line of lines) {
       // 提取总新闻数量
@@ -75,90 +101,40 @@ class NewsCrawler {
         if (match) {
           totalCount = parseInt(match[1]);
         }
-      }
-
-      // 提取分类信息
-      else if (line.startsWith('## ')) {
-        currentCategory = line.replace('## ', '').trim();
-        categories[currentCategory] = 0;
-      }
-
-      // 统计每个分类的新闻数量
-      else if (line.startsWith('- [') && currentCategory) {
-        categories[currentCategory] = (categories[currentCategory] || 0) + 1;
+        break;
       }
     }
-
-    // 过滤出有新闻的分类
-    const validCategories = Object.entries(categories)
-      .filter(([_, count]) => count > 0)
-      .map(([category, count]) => `${category}: ${count}条`);
 
     return {
       totalCount,
-      categorySummary: validCategories.join(', '),
     };
   }
 
-  // 分类新闻
-  categorizeNews(newsItems) {
-    const categories = {
-      经济与政策: ['经济', '政策', '央行', '统计局', '金融', '消费', '房地产', 'GDP', '投资'],
-      科技创新: ['AI', '科技', '研发', '机器人', '模型', '智能', '创新', '发布', '产品'],
-      资本市场: ['A股', '恒指', '融资', '基金', '投资', '股市', '成交额', '涨停', '跌'],
-      企业动态: ['公司', '股份', '成立', '融资', '产品', '旗下', '完成', '获'],
-      国际新闻: ['韩国', '英国', '美国', '国际', '全球', '海外', '欧盟'],
-      其他新闻: ['.'], // 匹配所有
-    };
-
-    const categorized = {};
-
-    for (const [category, keywords] of Object.entries(categories)) {
-      categorized[category] = newsItems.filter((item) => {
-        if (category === '其他新闻') return true;
-
-        const title = item.title || '';
-        const description = item.description || '';
-        const text = (title + description).toLowerCase();
-
-        return keywords.some((keyword) => text.includes(keyword.toLowerCase()));
-      });
-    }
-
-    return categorized;
-  }
-
-  // 生成Markdown内容
-  generateMarkdown(categorizedNews, totalCount) {
+  // 生成Markdown内容（完整版本）
+  generateMarkdown(newsItems) {
     const currentDate = this.getCurrentDate();
     const formattedTime = this.getFormattedTime();
 
     let markdown = `# ${currentDate} 新闻列表\n\n`;
     markdown += `更新时间: ${formattedTime}\n\n`;
 
-    // 按类别生成内容
-    for (const [category, items] of Object.entries(categorizedNews)) {
-      if (items.length === 0) continue;
+    // 直接显示所有新闻（包含描述信息）
+    newsItems.forEach((item) => {
+      const title = item.title || '无标题';
+      const url = item.url || '#';
+      const description = item.description || '';
+      const extra = item.extra ? ` | ${item.extra}` : '';
+      const time = item.time ? ` | 时间: ${item.time}` : '';
 
-      markdown += `## ${category}\n\n`;
+      markdown += `- [${title}](${url}) - ${description}${extra}${time}\n`;
+    });
 
-      items.forEach((item) => {
-        const title = item.title || '无标题';
-        const url = item.url || '#';
-        const description = item.description || '';
-        const extra = item.extra ? ` | ${item.extra}` : '';
-        const time = item.time ? ` | 时间: ${item.time}` : '';
-
-        markdown += `- [${title}](${url}) - ${description}${extra}${time}\n`;
-      });
-
-      markdown += '\n';
-    }
+    markdown += '\n';
 
     // 统计信息
     markdown += `## 统计信息\n\n`;
-    markdown += `- 总新闻数量: ${totalCount} 条\n`;
-    markdown += `- 数据来源: 36氪\n`;
+    markdown += `- 总新闻数量: ${newsItems.length} 条\n`;
+    markdown += `- 数据来源: 36氪 <https://tophub.today> \n`;
     markdown += `- 生成时间: ${formattedTime}\n`;
 
     return markdown;
@@ -215,7 +191,7 @@ class NewsCrawler {
     }
   }
 
-  // 发送现有文件内容作为通知
+  // 发送现有文件内容作为通知（简化版本）
   async sendExistingFileNotification() {
     try {
       const currentDate = this.getCurrentDate();
@@ -225,23 +201,47 @@ class NewsCrawler {
         throw new Error('无法读取现有文件内容');
       }
 
-      // 提取统计信息
-      const stats = this.extractStatsFromContent(fileContent);
+      // 提取标题和链接
+      const items = this.extractTitlesAndLinks(fileContent, 20);
 
-      // 格式化通知内容
-      const notificationContent = this.formatNotificationContent(fileContent);
+      // 生成简化通知内容
+      const simplifiedContent = this.generateSimpleNotification(items);
 
-      console.log(`使用现有文件发送通知 - 总数: ${stats.totalCount}条, 分类: ${stats.categorySummary}`);
+      console.log(`使用现有文件发送简化通知（${items.length}条新闻）`);
 
       // 发送通知
-      await notifier.notify(`📰 今日新闻 - ${currentDate}`, notificationContent, true);
+      await notifier.notify(`📰 今日新闻 - ${currentDate}`, simplifiedContent, true);
 
-      console.log('✅ 已使用现有文件发送通知');
+      await notifier.sendNewsNotification(`📰 今日新闻 - ${currentDate}`, items);
+
+      console.log('✅ 已使用现有文件发送简化通知');
       return true;
     } catch (error) {
       console.error('发送现有文件通知失败:', error.message);
       return false;
     }
+  }
+
+  // 生成简化通知内容（新抓取数据用）
+  generateSimpleNotificationFromItems(newsItems, maxItems = 10) {
+    const currentDate = this.getCurrentDate();
+    const formattedTime = this.getFormattedTime();
+
+    let content = `# 📰 今日要闻 ${currentDate} \n\n`;
+    content += `更新时间: ${formattedTime}\n\n`;
+
+    // 只显示前几条新闻的标题和链接
+    const displayItems = newsItems.slice(0, maxItems);
+
+    displayItems.forEach((item, index) => {
+      const title = item.title || '无标题';
+      const url = item.url || '#';
+      content += `${index + 1}. [${title}](${url})\n`;
+    });
+
+    content += `\n---\n`;
+
+    return content;
   }
 
   // 主执行函数
@@ -250,12 +250,12 @@ class NewsCrawler {
       const currentDate = this.getCurrentDate();
       const fileExists = await this.checkFileExists();
 
-      // 如果文件已存在，直接发送通知并退出
+      // 如果文件已存在，直接发送简化通知并退出
       if (fileExists) {
         console.log(`今日新闻文件已存在: tophub_news_${currentDate}.md`);
         const success = await this.sendExistingFileNotification();
         if (success) {
-          console.log('任务完成! (使用现有文件)');
+          console.log('任务完成! (使用现有文件发送简化通知)');
           return;
         } else {
           console.log('使用现有文件失败，继续执行抓取...');
@@ -271,27 +271,18 @@ class NewsCrawler {
 
       console.log(`成功获取 ${newsItems.length} 条新闻`);
 
-      // 分类新闻
-      const categorizedNews = this.categorizeNews(newsItems);
-
-      // 生成Markdown
-      const markdownContent = this.generateMarkdown(categorizedNews, newsItems.length);
-
-      // 保存到文件
+      // 生成完整Markdown并保存到文件
+      const fullMarkdown = this.generateMarkdown(newsItems);
       const outputFile = path.join(this.outputDir, `tophub_news_${currentDate}.md`);
-      await fs.writeFile(outputFile, markdownContent, 'utf8');
+      await fs.writeFile(outputFile, fullMarkdown, 'utf8');
       console.log(`新闻数据已保存到: ${path.basename(outputFile)}`);
 
+      // 生成简化通知内容（只包含标题和链接）
+      const simplifiedContent = this.generateSimpleNotificationFromItems(newsItems, 10);
+
       // 发送通知
-      const categorySummary = Object.entries(categorizedNews)
-        .filter(([_, items]) => items.length > 0)
-        .map(([category, items]) => `${category}: ${items.length}条`)
-        .join(', ');
-
-      console.log(`统计信息 - 总数: ${newsItems.length}条, 分类: ${categorySummary}`);
-
-      const notificationContent = this.formatNotificationContent(markdownContent);
-      await notifier.notify(`📰 今日新闻 - ${currentDate}`, notificationContent, true);
+      console.log(`统计信息 - 总数: ${newsItems.length}条`);
+      await notifier.notify(`📰 今日新闻 - ${currentDate}`, simplifiedContent, true);
 
       console.log('任务完成! (新抓取数据)');
     } catch (error) {
